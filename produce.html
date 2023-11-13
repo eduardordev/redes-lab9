@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulador de Sensores Meteorológicos</title>
+  <script src="https://unpkg.com/kafka-js"></script>
+</head>
+<body>
+  <h1>Simulador de Sensores Meteorológicos</h1>
+  <button onclick="startSimulation()">Iniciar Simulación</button>
+
+  <script>
+    const kafka = new Kafka({
+      clientId: 'weather-sensor-simulator',
+      brokers: ['157.245.244.105:9092']
+    });
+
+    const producer = kafka.producer();
+
+    function encodeSensorData(temperature, humidity, windDirection) {
+      const tempEncoded = Math.floor((temperature / 100) * 16383);
+      const humEncoded = humidity;
+      const windDirMap = { "N": 0, "NW": 1, "W": 2, "SW": 3, "S": 4, "SE": 5, "E": 6, "NE": 7 };
+      const windEncoded = windDirMap[windDirection];
+      const combined = (tempEncoded << 10) | (humEncoded << 3) | windEncoded;
+      const byteArray = new Uint8Array(3);
+      byteArray[2] = combined & 0xff;
+      byteArray[1] = (combined >> 8) & 0xff;
+      byteArray[0] = (combined >> 16) & 0xff;
+      return byteArray;
+    }
+
+    function simulateSensorData() {
+      const temperature = Math.random() * 100;
+      const humidity = Math.floor(Math.random() * 101);
+      const windDirections = ["N", "NW", "W", "SW", "S", "SE", "E", "NE"];
+      const windDirection = windDirections[Math.floor(Math.random() * windDirections.length)];
+      return { temperature, humidity, windDirection };
+    }
+
+    async function produceSensorData() {
+      const topicName = '20262_20009';
+      const { temperature, humidity, windDirection } = simulateSensorData();
+      const encodedData = encodeSensorData(temperature, humidity, windDirection);
+
+      await producer.connect();
+      await producer.send({
+        topic: topicName,
+        messages: [{ value: encodedData }],
+      });
+
+      console.log(`Enviado al topic ${topicName}: Temperatura: ${temperature}, Humedad: ${humidity}, Dirección del Viento: ${windDirection}`);
+    }
+
+    function startSimulation() {
+      setInterval(produceSensorData, getRandomInterval(15000, 30000));
+    }
+
+    function getRandomInterval(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+  </script>
+</body>
+</html>

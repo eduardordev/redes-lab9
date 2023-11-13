@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gráficos de Temperatura y Humedad</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <canvas id="temperatureChartCanvas" width="400" height="200"></canvas>
+  <canvas id="humidityChartCanvas" width="400" height="200"></canvas>
+  <script>
+    const rdkafka = require('node-rdkafka');
+    const { Chart } = require('chart.js');
+    const deque = require('collections/deque');
+    const kafkaConfig = {
+      'metadata.broker.list': '157.245.244.105:9092',
+      'group.id': 'my_group',
+      'auto.offset.reset': 'earliest'
+    };
+    const consumer = new rdkafka.KafkaConsumer(kafkaConfig, {
+      'auto.offset.reset': 'earliest'
+    });
+    const topicName = '20262_20009';
+    consumer.connect();
+    const temperatures = new deque(50);
+    const humidities = new deque(50);
+    function encodeSensorData(temperature, humidity, windDirection) {
+      const tempEncoded = Math.floor((temperature / 100) * 16383);
+      const humEncoded = humidity;
+      const windDirMap = { "N": 0, "NW": 1, "W": 2, "SW": 3, "S": 4, "SE": 5, "E": 6, "NE": 7 };
+      const windEncoded = windDirMap[windDirection];
+      const combined = (tempEncoded << 10) | (humEncoded << 3) | windEncoded;
+      const byteArray = new Uint8Array(3);
+      byteArray[2] = combined & 0xff;
+      byteArray[1] = (combined >> 8) & 0xff;
+      byteArray[0] = (combined >> 16) & 0xff;
+      return byteArray;
+    }
+    function decodeSensorData(encodedBytes) {
+      const combined = (encodedBytes[0] << 16) | (encodedBytes[1] << 8) | encodedBytes[2];
+      const temperature = ((combined >> 10) & 0x3FFF) / 16383 * 100;
+      const humidity = (combined >> 3) & 0x7F;
+      const windDirection = combined & 0x07;
+      const windDirMap = { 0: "N", 1: "NW", 2: "W", 3: "SW", 4: "S", 5: "SE", 6: "E", 7: "NE" };
+      const windDir = windDirMap[windDirection];
+      return { temperature, humidity, windDirection: windDir };
+    }
+    function consumeAndPlot() {
+      const temperatureChartCanvas = document.getElementById('temperatureChartCanvas');
+      const humidityChartCanvas = document.getElementById('humidityChartCanvas');
+      const temperatureChart = new Chart(temperatureChartCanvas, {
+        type: 'line',
+        data: {
+          datasets: [{
+            label: 'Temperature',
+            data: [],
+            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+            borderColor: 'rgba(255, 99, 132, 1)',
+            borderWidth: 1,
+            fill: false,
+          }],
+        },
+        options: {
+          scales: {
+            x: {
+              type: 'linear',
+              position: 'bottom',
+            },
+            y: {
+              min: 0,
+              max: 100,
+            },
+          },
+        },
+      });
+      const humidityChart = new Chart(humidityChartCanvas, {
+        type: 'line',
+        data: {
+          datasets: [{
+            label: 'Humidity',
+            data: [],
+            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+            borderColor: 'rgba(75, 192, 192, 1)',
+            borderWidth: 1,
+            fill: false,
+          }],
+        },
+        options: {
+          scales: {
+            x: {
+              type: 'linear',
+              position: 'bottom',
+            },
+            y: {
+              min: 0,
+              max: 100,
+            },
+          },
+        },
+      });
+      consumer.subscribe([topicName]);
+      consumer.consume();
+      consumer.on('data', (message) => {
+        const encodedData = message.value.toString('binary');
+        const { temperature, humidity, windDirection } = decodeSensorData(encodedData);
+        temperatures.push(temperature);
+        humidities.push(humidity);
+        temperatureChart.data.datasets[0].data = temperatures.toArray();
+        humidityChart.data.datasets[0].data = humidities.toArray();
+        temperatureChart.update();
+        humidityChart.update();
+      });
+    }
+    document.addEventListener('DOMContentLoaded', function () {
+      consumeAndPlot();
+    });
+  </script>
+</body>
+</html>
